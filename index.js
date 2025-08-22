@@ -5,7 +5,7 @@ const dotenv = require("dotenv");
 const pino = require("pino");
 const pinoHttp = require("pino-http");
 
-// Render(Node 20+ / 22+) は fetch がグローバルで使えます
+// Node 20+/22+ は fetch がグローバルで使用可
 dotenv.config();
 
 const logger = pino({ level: "info" });
@@ -54,10 +54,18 @@ app.get("/api/suggest", async (req, res) => {
 });
 
 // ==== 楽天 商品検索API ====
-// 参考エンドポイント: https://app.rakuten.co.jp/services/api/IchibaItem/Search/20170706
+// 参考: https://app.rakuten.co.jp/services/api/IchibaItem/Search/20170706
 // 必須: process.env.RAKUTEN_APP_ID
 // 任意: process.env.RAKUTEN_AFFILIATE_ID
-function buildRakutenSearchUrl({ keyword, hits = 10, page = 1 }) {
+
+// 許可する sort 一覧
+const ALLOWED_SORT = new Set([
+  "+itemPrice", "-itemPrice",
+  "+reviewCount", "-reviewCount",
+  "+reviewAverage", "-reviewAverage",
+]);
+
+function buildRakutenSearchUrl({ keyword, hits = 10, page = 1, sort = "" }) {
   const base = "https://app.rakuten.co.jp/services/api/IchibaItem/Search/20170706";
   const u = new URL(base);
   u.searchParams.set("applicationId", process.env.RAKUTEN_APP_ID);
@@ -68,17 +76,19 @@ function buildRakutenSearchUrl({ keyword, hits = 10, page = 1 }) {
   u.searchParams.set("hits", String(Math.min(Math.max(hits, 1), 30))); // 1〜30
   u.searchParams.set("page", String(Math.max(page, 1)));
   u.searchParams.set("format", "json");
-  // 画像・並び順などのオプション（必要に応じて）
   u.searchParams.set("imageFlag", "1"); // 画像あり
-  // u.searchParams.set("sort", "+itemPrice"); // 価格安い順など（任意）
+  if (sort && ALLOWED_SORT.has(sort)) {
+    u.searchParams.set("sort", sort);
+  }
   return u.toString();
 }
 
-// /api/search?keyword=イヤホン&hits=10&page=1
+// /api/search?keyword=イヤホン&hits=10&page=1&sort=+itemPrice
 app.get("/api/search", async (req, res) => {
   const keyword = (req.query.keyword || "").toString().trim();
   const hits = parseInt(req.query.hits || "10", 10);
   const page = parseInt(req.query.page || "1", 10);
+  const sort = (req.query.sort || "").toString();
 
   if (!keyword) return res.status(400).json({ error: "keyword is required" });
   if (!process.env.RAKUTEN_APP_ID) {
@@ -86,7 +96,7 @@ app.get("/api/search", async (req, res) => {
   }
 
   try {
-    const url = buildRakutenSearchUrl({ keyword, hits, page });
+    const url = buildRakutenSearchUrl({ keyword, hits, page, sort });
     const r = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
     if (!r.ok) {
       const text = await r.text();
@@ -96,22 +106,21 @@ app.get("/api/search", async (req, res) => {
 
     // data.Items は [{ Item: {...} }, ...] の配列
     const items = (data.Items || []).map(({ Item }) => ({
-      id: Item.itemCode, // ショップコード:商品コード
-      name: Item.itemName,
-      url: Item.itemUrl, // affiliateId を指定していればアフィリエイトURL化
+      id: Item.itemCode,           // ショップコード:商品コード
+      name: Item.itemName,         // 元タイトル（フロント側で整形）
+      url: Item.itemUrl,           // affiliateId 指定時はアフィリエイトURL
       price: Item.itemPrice,
       shop: Item.shopName,
       image:
         Item.mediumImageUrls?.[0]?.imageUrl ||
         Item.smallImageUrls?.[0]?.imageUrl ||
         null,
-      // 補足情報（必要に応じてUIへ）
       reviewAverage: Item.reviewAverage,
       reviewCount: Item.reviewCount,
       catchcopy: Item.catchcopy || null,
       genreId: Item.genreId || null,
-      taxFlag: Item.taxFlag, // 0:税込/1:税別
-      postageFlag: Item.postageFlag, // 0:送料別/1:送料込
+      taxFlag: Item.taxFlag,       // 0:税込/1:税別
+      postageFlag: Item.postageFlag // 0:送料別/1:送料込
     }));
 
     res.json({
