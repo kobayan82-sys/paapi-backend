@@ -98,3 +98,15 @@ app.get("/api/search", async (req, res) => {
 
 const port = process.env.PORT || 10000;
 app.listen(port, "0.0.0.0", () => logger.info(`Server listening on :${port}`));
+
+app.get("/debug/creds", (req, res) => {
+  const mask = (v) => (v ? v.slice(0, 4) + "***" + v.slice(-4) : null);
+  res.json({
+    accessKeyPresent: !!process.env.PAAPI_ACCESS_KEY,
+    secretKeyPresent: !!process.env.PAAPI_SECRET_KEY,
+    partnerTag: process.env.PAAPI_PARTNER_TAG || null,
+    maskedAccessKey: mask(process.env.PAAPI_ACCESS_KEY || ""),
+    maskedSecretKey: mask(process.env.PAAPI_SECRET_KEY || ""),
+  });
+});
+
