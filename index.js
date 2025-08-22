@@ -72,7 +72,8 @@ function buildRakutenSearchUrl({ keyword, hits = 10, page = 1, sort = "" }) {
   if (process.env.RAKUTEN_AFFILIATE_ID) {
     u.searchParams.set("affiliateId", process.env.RAKUTEN_AFFILIATE_ID);
   }
-  u.searchParams.set("keyword", keyword);
+  if (keyword) u.searchParams.set("keyword", keyword);
+  if (genreId) u.searchParams.set("genreId", String(genreId));
   u.searchParams.set("hits", String(Math.min(Math.max(hits, 1), 30))); // 1〜30
   u.searchParams.set("page", String(Math.max(page, 1)));
   u.searchParams.set("format", "json");
@@ -88,15 +89,18 @@ app.get("/api/search", async (req, res) => {
   const keyword = (req.query.keyword || "").toString().trim();
   const hits = parseInt(req.query.hits || "10", 10);
   const page = parseInt(req.query.page || "1", 10);
+  const genreId = req.query.genreId ? String(req.query.genreId).trim() : undefined;
   const sort = (req.query.sort || "").toString();
 
-  if (!keyword) return res.status(400).json({ error: "keyword is required" });
+  if (!keyword && !genreId) {
+    return res.status(400).json({ error: "Either keyword or genreId is required" });
+    }
   if (!process.env.RAKUTEN_APP_ID) {
     return res.status(500).json({ error: "RAKUTEN_APP_ID is missing in env" });
   }
 
   try {
-    const url = buildRakutenSearchUrl({ keyword, hits, page, sort });
+    const url = buildRakutenSearchUrl({ keyword, hits, page, genreId });
     const r = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
     if (!r.ok) {
       const text = await r.text();
