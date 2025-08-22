@@ -3,6 +3,7 @@ const cors = require("cors");
 const dotenv = require("dotenv");
 const pino = require("pino");
 const pinoHttp = require("pino-http");
+const { AmazonApi } = require("amazon-paapi"); // ← 追記1
 
 dotenv.config();
 
@@ -47,6 +48,53 @@ app.get("/api/suggest", async (req, res) => {
   }
 });
 
+// === Amazon商品検索API ===  ← 追記2（ここから）
+function getAmazonClientOrNull() {
+  const { PAAPI_ACCESS_KEY, PAAPI_SECRET_KEY, PAAPI_PARTNER_TAG } = process.env;
+  if (!PAAPI_ACCESS_KEY || !PAAPI_SECRET_KEY || !PAAPI_PARTNER_TAG) return null;
+  try {
+    return new AmazonApi({
+      accessKey: PAAPI_ACCESS_KEY,
+      secretKey: PAAPI_SECRET_KEY,
+      partnerTag: PAAPI_PARTNER_TAG,
+      country: "JP",
+    });
+  } catch {
+    return null;
+  }
+}
+
+// /api/search?keyword=イヤホン&limit=10&index=Electronics
+app.get("/api/search", async (req, res) => {
+  const keyword = (req.query.keyword || "").toString().trim();
+  const limit = Math.min(parseInt(req.query.limit || "10", 10), 30);
+  const searchIndex = (req.query.index || "All").toString();
+
+  if (!keyword) return res.status(400).json({ error: "keyword is required" });
+
+  const amazon = getAmazonClientOrNull();
+  if (!amazon) {
+    return res.status(500).json({ error: "PA-API credentials missing or invalid" });
+  }
+
+  try {
+    const data = await amazon.searchItems({ keywords: keyword, searchIndex, itemCount: limit });
+    const items = (data.items || []).map((item) => ({
+      asin: item.asin,
+      title: item.title,
+      url: item.detailPageUrl,
+      image: item.images?.large?.url || item.images?.medium?.url || item.images?.small?.url || null,
+      price: item.prices?.price?.displayAmount || null,
+      rating: item.reviews?.rating || null,
+      totalReviews: item.reviews?.totalReviews || null,
+    }));
+    res.json({ keyword, searchIndex, count: items.length, items });
+  } catch (err) {
+    req.log?.error?.({ err }, "PA-API error");
+    res.status(500).json({ error: "Amazon API error" });
+  }
+});
+// === 追記2（ここまで）
 
 const port = process.env.PORT || 10000;
 app.listen(port, "0.0.0.0", () => logger.info(`Server listening on :${port}`));
