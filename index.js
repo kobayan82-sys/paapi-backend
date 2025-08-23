@@ -14,7 +14,6 @@ const app = express();
 app.use(express.json());
 app.use(pinoHttp({ logger }));
 
-/** CORS（本番は ALLOWED_ORIGIN をドメインに固定） */
 const allowedOrigin = process.env.ALLOWED_ORIGIN || "*";
 app.use(
   cors({
@@ -25,14 +24,8 @@ app.use(
   })
 );
 
-/** ヘルスチェック */
 app.get("/health", (req, res) => res.json({ ok: true }));
 
-/** ===== 楽天 API 検索（genreId 対応） =====
- *  GET /api/search?keyword=イヤホン&hits=30&page=1&genreId=100371
- *   - keyword or genreId のどちらか必須（両方指定も可）
- *   - hits 最大 30
- */
 function buildRakutenSearchUrl({ keyword, hits = 10, page = 1, genreId, sort, minPrice, maxPrice }) {
   const base = "https://app.rakuten.co.jp/services/api/IchibaItem/Search/20170706";
   const u = new URL(base);
@@ -40,29 +33,21 @@ function buildRakutenSearchUrl({ keyword, hits = 10, page = 1, genreId, sort, mi
   if (!appId) throw new Error("RAKUTEN_APP_ID is missing in env");
 
   u.searchParams.set("applicationId", appId);
+  if (process.env.RAKUTEN_AFFILIATE_ID) u.searchParams.set("affiliateId", process.env.RAKUTEN_AFFILIATE_ID);
 
-  // アフィリエイトID（任意）
-  if (process.env.RAKUTEN_AFFILIATE_ID) {
-    u.searchParams.set("affiliateId", process.env.RAKUTEN_AFFILIATE_ID);
-  }
-
-  // keyword / genreId はどちらかでもOK
   if (keyword) u.searchParams.set("keyword", keyword);
   if (genreId) u.searchParams.set("genreId", String(genreId));
 
-  // 追加の任意パラメータ
   if (sort) u.searchParams.set("sort", String(sort));
   if (minPrice) u.searchParams.set("minPrice", String(minPrice));
   if (maxPrice) u.searchParams.set("maxPrice", String(maxPrice));
 
-  // 基本パラメータ
   const safeHits = Math.min(Math.max(parseInt(hits || "10", 10), 1), 30);
   const safePage = Math.max(parseInt(page || "1", 10), 1);
   u.searchParams.set("hits", String(safeHits));
   u.searchParams.set("page", String(safePage));
   u.searchParams.set("format", "json");
   u.searchParams.set("imageFlag", "1");
-
   return u.toString();
 }
 
@@ -117,6 +102,8 @@ app.get("/api/search", async (req, res) => {
         shop: it.shopName || "",
         affiliateUrl: it.affiliateUrl || null,
         genreId: it.genreId || null,
+        reviewAverage: typeof it.reviewAverage === "number" ? it.reviewAverage : (it.reviewAverage ? Number(it.reviewAverage) : null),
+        reviewCount: typeof it.reviewCount === "number" ? it.reviewCount : (it.reviewCount ? Number(it.reviewCount) : null),
       };
     });
 
@@ -134,9 +121,6 @@ app.get("/api/search", async (req, res) => {
   }
 });
 
-/** ===== Googleサジェスト（非公式）→ ラッコリンク付き =====
- *  GET /api/suggest?q=イヤホン
- */
 app.get("/api/suggest", async (req, res) => {
   const q = (req.query.q || "").toString().trim();
   if (!q) return res.status(400).json({ error: "q is required" });
@@ -145,7 +129,7 @@ app.get("/api/suggest", async (req, res) => {
     const url = `https://suggestqueries.google.com/complete/search?client=firefox&hl=ja&q=${encodeURIComponent(q)}`;
     const r = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (Render-Node/Express)" } });
     if (!r.ok) throw new Error(`Suggest HTTP ${r.status}`);
-    const json = await r.json(); // ["q", ["候補..."]]
+    const json = await r.json();
     const suggestions = Array.isArray(json?.[1]) ? json[1] : [];
 
     res.json({
@@ -162,6 +146,5 @@ app.get("/api/suggest", async (req, res) => {
   }
 });
 
-/** 起動 */
 const port = process.env.PORT || 10000;
 app.listen(port, "0.0.0.0", () => logger.info(`Server listening on :${port}`));
